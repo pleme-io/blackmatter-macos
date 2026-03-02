@@ -35,7 +35,8 @@
     testHelpers = import "${substrate}/lib/test-helpers.nix" { inherit lib; };
   in {
     # ── Overlay ─────────────────────────────────────────────────────
-    overlays.default = (import "${substrate}/lib/swift-overlay.nix").mkSwiftOverlay {};
+    # Enriched overlay: Swift toolchain + build helpers (mkSwiftPackage, mkSwiftApp, etc.)
+    overlays.default = (import ./lib/overlay.nix).mkSwiftOverlay {};
 
     # ── Packages ────────────────────────────────────────────────────
     packages = forEachDarwin ({ pkgs, ... }: {
