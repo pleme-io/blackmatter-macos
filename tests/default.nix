@@ -21,6 +21,7 @@ let
   # ── Mock pkgs for build helper tests ────────────────────────────────
   # mkDerivation returns the attrs it receives — lets us inspect build phases
   mockPkgs = {
+    inherit lib;
     stdenv = {
       hostPlatform.isDarwin = true;
       mkDerivation = attrs: attrs;
@@ -32,6 +33,7 @@ let
     swift = "/nix/store/mock-swift";
     zigToolchain = "/nix/store/mock-zig-toolchain";
     apple-sdk = "/nix/store/mock-apple-sdk";
+    installShellFiles = "/nix/store/mock-installShellFiles";
     writeText = name: content: "/nix/store/mock-${name}";
   };
 
@@ -1050,13 +1052,39 @@ let
         == codesignLib.signAllMachO { path = "/test"; })
       "unified codesign.signAllMachO should match direct import")
 
+    # ── New exports ──
+    (mkTest "unified-has-mkSwiftCompletionAttrs"
+      (macosLib ? mkSwiftCompletionAttrs)
+      "lib/default.nix should export mkSwiftCompletionAttrs")
+
+    (mkTest "unified-mkSwiftCompletionAttrs-is-function"
+      (builtins.isFunction macosLib.mkSwiftCompletionAttrs)
+      "unified mkSwiftCompletionAttrs should be a function")
+
+    (mkTest "unified-has-swiftToolRelease"
+      (macosLib ? swiftToolRelease)
+      "lib/default.nix should export swiftToolRelease")
+
+    (mkTest "unified-swiftToolRelease-is-path"
+      (builtins.isPath macosLib.swiftToolRelease)
+      "unified swiftToolRelease should be a path")
+
+    (mkTest "unified-mkSwiftCompletionAttrs-matches-direct"
+      (let
+        directLib = import ../lib/completions.nix;
+        directResult = directLib.mkSwiftCompletionAttrs mockPkgs { pname = "test"; };
+        unifiedResult = macosLib.mkSwiftCompletionAttrs mockPkgs { pname = "test"; };
+      in directResult == unifiedResult)
+      "unified mkSwiftCompletionAttrs should match direct import")
+
     # ── Exact attribute count ──
     (mkTest "unified-exact-exports"
       (builtins.sort builtins.lessThan (builtins.attrNames macosLib) == [
-        "codesign" "mkSwiftApp" "mkSwiftOverlay" "mkSwiftPackage"
-        "mkXcodeProject" "mkZigSwiftApp" "sandbox" "sdkHelpers"
+        "codesign" "mkSwiftApp" "mkSwiftCompletionAttrs" "mkSwiftOverlay"
+        "mkSwiftPackage" "mkXcodeProject" "mkZigSwiftApp" "sandbox"
+        "sdkHelpers" "swiftToolRelease"
       ])
-      "lib/default.nix should export exactly 8 attributes")
+      "lib/default.nix should export exactly 10 attributes")
   ];
 
   # ══════════════════════════════════════════════════════════════════════
@@ -1183,6 +1211,553 @@ let
       "module should fall back to pkgs.swift if swiftToolchain is missing")
   ];
 
+  # ══════════════════════════════════════════════════════════════════════
+  # completions.nix tests (18)
+  # ══════════════════════════════════════════════════════════════════════
+  completionTests = let
+    completionsLib = import ../lib/completions.nix;
+    mkCompletion = completionsLib.mkSwiftCompletionAttrs mockPkgs;
+
+    nullResult = mkCompletion { pname = "test-tool"; completions = null; };
+    disabledResult = mkCompletion { pname = "test-tool"; completions = { install = false; }; };
+    enabledResult = mkCompletion { pname = "test-tool"; completions = { install = true; }; };
+    customCmdResult = mkCompletion { pname = "test-tool"; completions = { install = true; command = "custom-cmd"; }; };
+    defaultCmdResult = mkCompletion { pname = "my-tool"; completions = { install = true; }; };
+  in [
+    # null completions
+    (mkTest "completion-null-empty-nativeBuildInputs"
+      (nullResult.nativeBuildInputs == [])
+      "null completions should produce empty nativeBuildInputs")
+
+    (mkTest "completion-null-empty-postInstallScript"
+      (nullResult.postInstallScript == "")
+      "null completions should produce empty postInstallScript")
+
+    # disabled completions
+    (mkTest "completion-disabled-empty-nativeBuildInputs"
+      (disabledResult.nativeBuildInputs == [])
+      "install=false should produce empty nativeBuildInputs")
+
+    (mkTest "completion-disabled-empty-postInstallScript"
+      (disabledResult.postInstallScript == "")
+      "install=false should produce empty postInstallScript")
+
+    # enabled completions
+    (mkTest "completion-enabled-has-installShellFiles"
+      (builtins.elem "/nix/store/mock-installShellFiles" enabledResult.nativeBuildInputs)
+      "install=true should include installShellFiles in nativeBuildInputs")
+
+    (mkTest "completion-enabled-nativeBuildInputs-length"
+      (builtins.length enabledResult.nativeBuildInputs == 1)
+      "install=true should have exactly 1 nativeBuildInput")
+
+    (mkTest "completion-enabled-postInstall-is-string"
+      (builtins.isString enabledResult.postInstallScript)
+      "install=true should produce string postInstallScript")
+
+    (mkTest "completion-enabled-has-generate-completion-script"
+      (lib.hasInfix "--generate-completion-script" enabledResult.postInstallScript)
+      "install=true should use --generate-completion-script")
+
+    (mkTest "completion-enabled-has-bash"
+      (lib.hasInfix "bash" enabledResult.postInstallScript)
+      "install=true should generate bash completions")
+
+    (mkTest "completion-enabled-has-zsh"
+      (lib.hasInfix "zsh" enabledResult.postInstallScript)
+      "install=true should generate zsh completions")
+
+    (mkTest "completion-enabled-has-fish"
+      (lib.hasInfix "fish" enabledResult.postInstallScript)
+      "install=true should generate fish completions")
+
+    (mkTest "completion-enabled-has-installShellCompletion"
+      (lib.hasInfix "installShellCompletion" enabledResult.postInstallScript)
+      "install=true should call installShellCompletion")
+
+    (mkTest "completion-enabled-uses-pname-as-default-cmd"
+      (lib.hasInfix "test-tool" enabledResult.postInstallScript)
+      "install=true should use pname as default command")
+
+    # custom command
+    (mkTest "completion-custom-cmd-in-script"
+      (lib.hasInfix "custom-cmd" customCmdResult.postInstallScript)
+      "custom command should appear in postInstallScript")
+
+    (mkTest "completion-custom-cmd-in-bin-path"
+      (lib.hasInfix "$out/bin/custom-cmd" customCmdResult.postInstallScript)
+      "custom command should appear in $out/bin path")
+
+    (mkTest "completion-custom-cmd-not-pname"
+      (!(lib.hasInfix "test-tool" customCmdResult.postInstallScript))
+      "custom command should replace pname in script")
+
+    # default command fallback
+    (mkTest "completion-default-cmd-uses-pname"
+      (lib.hasInfix "my-tool" defaultCmdResult.postInstallScript)
+      "default command should fall back to pname")
+
+    # return type
+    (mkTest "completion-returns-attrset"
+      (builtins.isAttrs enabledResult)
+      "mkSwiftCompletionAttrs should return an attrset")
+  ];
+
+  # ══════════════════════════════════════════════════════════════════════
+  # mkSwiftPackage + completions integration tests (12)
+  # ══════════════════════════════════════════════════════════════════════
+  swiftPackageCompletionTests = let
+    mkPkg = swiftPkgLib.mkSwiftPackage mockPkgs;
+
+    noCompletionPkg = mkPkg {
+      pname = "no-comp-tool";
+      version = "1.0.0";
+      src = "/mock/src";
+    };
+
+    nullCompletionPkg = mkPkg {
+      pname = "null-comp-tool";
+      version = "1.0.0";
+      src = "/mock/src";
+      completions = null;
+    };
+
+    enabledCompletionPkg = mkPkg {
+      pname = "comp-tool";
+      version = "1.0.0";
+      src = "/mock/src";
+      completions = { install = true; };
+    };
+
+    customCmdCompletionPkg = mkPkg {
+      pname = "comp-tool";
+      version = "1.0.0";
+      src = "/mock/src";
+      completions = { install = true; command = "my-cmd"; };
+    };
+
+    disabledCompletionPkg = mkPkg {
+      pname = "disabled-comp-tool";
+      version = "1.0.0";
+      src = "/mock/src";
+      completions = { install = false; };
+    };
+  in [
+    (mkTest "swiftpkg-comp-no-completions-no-installShellFiles"
+      (!(builtins.elem "/nix/store/mock-installShellFiles" noCompletionPkg.nativeBuildInputs))
+      "mkSwiftPackage without completions should not include installShellFiles")
+
+    (mkTest "swiftpkg-comp-null-no-installShellFiles"
+      (!(builtins.elem "/nix/store/mock-installShellFiles" nullCompletionPkg.nativeBuildInputs))
+      "mkSwiftPackage with null completions should not include installShellFiles")
+
+    (mkTest "swiftpkg-comp-enabled-has-installShellFiles"
+      (builtins.elem "/nix/store/mock-installShellFiles" enabledCompletionPkg.nativeBuildInputs)
+      "mkSwiftPackage with completions should include installShellFiles")
+
+    (mkTest "swiftpkg-comp-enabled-installPhase-has-generate"
+      (lib.hasInfix "--generate-completion-script" enabledCompletionPkg.installPhase)
+      "mkSwiftPackage with completions should have completion generation in installPhase")
+
+    (mkTest "swiftpkg-comp-enabled-installPhase-has-installShellCompletion"
+      (lib.hasInfix "installShellCompletion" enabledCompletionPkg.installPhase)
+      "mkSwiftPackage with completions should call installShellCompletion")
+
+    (mkTest "swiftpkg-comp-custom-cmd-in-installPhase"
+      (lib.hasInfix "my-cmd" customCmdCompletionPkg.installPhase)
+      "mkSwiftPackage with custom completion command should use it in installPhase")
+
+    (mkTest "swiftpkg-comp-disabled-no-installShellFiles"
+      (!(builtins.elem "/nix/store/mock-installShellFiles" disabledCompletionPkg.nativeBuildInputs))
+      "mkSwiftPackage with disabled completions should not include installShellFiles")
+
+    (mkTest "swiftpkg-comp-disabled-no-generate-in-installPhase"
+      (!(lib.hasInfix "--generate-completion-script" disabledCompletionPkg.installPhase))
+      "mkSwiftPackage with disabled completions should not have completion generation")
+
+    (mkTest "swiftpkg-comp-still-has-swift-toolchain"
+      (builtins.elem "/nix/store/mock-swift-toolchain" enabledCompletionPkg.nativeBuildInputs)
+      "mkSwiftPackage with completions should still include swiftToolchain")
+
+    (mkTest "swiftpkg-comp-still-has-install"
+      (lib.hasInfix "install -Dm755" enabledCompletionPkg.installPhase)
+      "mkSwiftPackage with completions should still install binaries")
+
+    (mkTest "swiftpkg-comp-nativeBuildInputs-count"
+      (builtins.length enabledCompletionPkg.nativeBuildInputs == 2)
+      "mkSwiftPackage with completions should have swift + installShellFiles")
+
+    (mkTest "swiftpkg-comp-no-completion-installPhase-no-generate"
+      (!(lib.hasInfix "--generate-completion-script" noCompletionPkg.installPhase))
+      "mkSwiftPackage without completions should not have completion generation")
+  ];
+
+  # ══════════════════════════════════════════════════════════════════════
+  # swift-tool-release.nix structural tests (10)
+  # ══════════════════════════════════════════════════════════════════════
+  swiftToolReleaseTests = let
+    # Full functional testing requires real nixpkgs (not available in pure eval).
+    # We test the file structure and its internal dependencies.
+    swiftToolReleaseModule = import ../lib/swift-tool-release.nix;
+  in [
+    (mkTest "swift-tool-release-is-function"
+      (builtins.isFunction swiftToolReleaseModule)
+      "swift-tool-release.nix should export a function")
+
+    (mkTest "swift-tool-release-lib-export-is-path"
+      (builtins.isPath macosLib.swiftToolRelease)
+      "lib/default.nix should export swiftToolRelease as a path")
+
+    (mkTest "swift-tool-release-lib-export-ends-with-nix"
+      (lib.hasSuffix ".nix" (toString macosLib.swiftToolRelease))
+      "swiftToolRelease path should end with .nix")
+
+    (mkTest "swift-tool-release-dep-completions"
+      (builtins.isAttrs (import ../lib/completions.nix))
+      "completions.nix dependency should be importable")
+
+    (mkTest "swift-tool-release-dep-completions-has-func"
+      ((import ../lib/completions.nix) ? mkSwiftCompletionAttrs)
+      "completions.nix should export mkSwiftCompletionAttrs")
+
+    (mkTest "swift-tool-release-dep-completions-func-type"
+      (builtins.isFunction (import ../lib/completions.nix).mkSwiftCompletionAttrs)
+      "mkSwiftCompletionAttrs should be a function")
+
+    (mkTest "swift-tool-release-dep-overlay"
+      (builtins.isAttrs (import ../lib/overlay.nix))
+      "overlay.nix dependency should be importable")
+
+    (mkTest "swift-tool-release-dep-swift-package"
+      (builtins.isAttrs (import ../lib/swift-package.nix { inherit lib; }))
+      "swift-package.nix dependency should be importable")
+
+    (mkTest "swift-tool-release-dep-sandbox"
+      (builtins.isAttrs (import ../lib/sandbox.nix { inherit lib; }))
+      "sandbox.nix dependency should be importable")
+
+    (mkTest "swift-tool-release-dep-sdk-helpers"
+      (builtins.isAttrs (import ../lib/sdk-helpers.nix { inherit lib; }))
+      "sdk-helpers.nix dependency should be importable")
+  ];
+
+  # ══════════════════════════════════════════════════════════════════════
+  # Edge case tests — codesign (8)
+  # ══════════════════════════════════════════════════════════════════════
+  codesignEdgeTests = let
+    allFalseEnt = codesignLib.mkEntitlements {};
+    allTrueEnt = codesignLib.mkEntitlements {
+      allowJit = true; disableLibraryValidation = true; appSandbox = true;
+      networkClient = true; networkServer = true;
+      fileReadAccess = true; fileWriteAccess = true;
+    };
+    deepEntSign = codesignLib.adHocSign {
+      path = "/test"; deep = true; entitlements = "/ent.plist";
+    };
+    signWithEnt = codesignLib.signAllMachO {
+      path = "/app"; entitlements = "/ent.plist";
+    };
+    signNoEnt = codesignLib.signAllMachO { path = "/app"; };
+  in [
+    (mkTest "codesign-edge-all-false-no-true-tag"
+      (!(lib.hasInfix "<true/>" allFalseEnt))
+      "mkEntitlements with all defaults should have no <true/> tags")
+
+    (mkTest "codesign-edge-all-true-7-true-tags"
+      (builtins.length (lib.splitString "<true/>" allTrueEnt) == 8)
+      "mkEntitlements with all true should have exactly 7 <true/> tags")
+
+    (mkTest "codesign-edge-deep-plus-entitlements"
+      (lib.hasInfix "--deep" deepEntSign && lib.hasInfix "--entitlements" deepEntSign)
+      "adHocSign with deep+entitlements should have both flags")
+
+    (mkTest "codesign-edge-signAllMachO-ent-flag"
+      (lib.hasInfix "--entitlements" signWithEnt)
+      "signAllMachO with entitlements should include --entitlements")
+
+    (mkTest "codesign-edge-signAllMachO-no-ent-no-flag"
+      (!(lib.hasInfix "--entitlements" signNoEnt))
+      "signAllMachO without entitlements should not include --entitlements flag")
+
+    (mkTest "codesign-edge-signAllMachO-while-loop"
+      (lib.hasInfix "while read" signNoEnt)
+      "signAllMachO should use while read loop pattern")
+
+    (mkTest "codesign-edge-adHocSign-quoted-path"
+      (lib.hasInfix "\"/tmp/test\"" (codesignLib.adHocSign { path = "/tmp/test"; }))
+      "adHocSign should quote the path")
+
+    (mkTest "codesign-edge-signAllMachO-local-var"
+      (lib.hasInfix "local f=" signNoEnt)
+      "signAllMachO helper should use local variable")
+  ];
+
+  # ══════════════════════════════════════════════════════════════════════
+  # Edge case tests — sandbox (6)
+  # ══════════════════════════════════════════════════════════════════════
+  sandboxEdgeTests = let
+    impureXcode = sandbox.mkImpureDarwinAttrs { needsXcodebuild = true; };
+    impureBoth = sandbox.mkImpureDarwinAttrs {
+      needsSwiftUI = true; needsXcodebuild = true;
+    };
+    pureOldSDK = sandbox.mkPureSDKInputs mockPkgsOldSDK;
+  in [
+    (mkTest "sandbox-edge-xcodebuild-noChroot"
+      (impureXcode.__noChroot == true)
+      "mkImpureDarwinAttrs with needsXcodebuild should set __noChroot")
+
+    (mkTest "sandbox-edge-xcodebuild-has-hostDeps"
+      (builtins.isList impureXcode.impureHostDeps
+        && impureXcode.impureHostDeps != [])
+      "mkImpureDarwinAttrs with needsXcodebuild should have non-empty hostDeps")
+
+    (mkTest "sandbox-edge-both-has-sdkroot-and-swiftui"
+      (lib.hasInfix "SDKROOT" impureBoth.preBuild
+        && lib.hasInfix "SwiftUI" impureBoth.preBuild)
+      "mkImpureDarwinAttrs with both flags should have sdkroot and swiftUI check")
+
+    (mkTest "sandbox-edge-old-sdk-has-security"
+      (builtins.elem "mock-Security" pureOldSDK)
+      "mkPureSDKInputs old SDK should include Security framework")
+
+    (mkTest "sandbox-edge-old-sdk-has-system-config"
+      (builtins.elem "mock-SystemConfiguration" pureOldSDK)
+      "mkPureSDKInputs old SDK should include SystemConfiguration framework")
+
+    (mkTest "sandbox-edge-old-sdk-no-apple-sdk"
+      (!(builtins.elem "/nix/store/mock-apple-sdk" pureOldSDK))
+      "mkPureSDKInputs old SDK should not have apple-sdk")
+  ];
+
+  # ══════════════════════════════════════════════════════════════════════
+  # Edge case tests — mkSwiftPackage (10)
+  # ══════════════════════════════════════════════════════════════════════
+  swiftPackageEdgeTests = let
+    mkPkg = swiftPkgLib.mkSwiftPackage mockPkgs;
+
+    defaultPkg = mkPkg {
+      pname = "edge-tool"; version = "1.0.0"; src = "/mock/src";
+    };
+
+    extraAttrPkg = mkPkg {
+      pname = "extra-tool"; version = "1.0.0"; src = "/mock/src";
+      customAttr = "preserved";
+    };
+
+    extraBuildInputsPkg = mkPkg {
+      pname = "extra-bi-tool"; version = "1.0.0"; src = "/mock/src";
+      extraBuildInputs = [ "extra-dep-1" "extra-dep-2" ];
+    };
+
+    withExtraNativePkg = mkPkg {
+      pname = "extra-native-tool"; version = "1.0.0"; src = "/mock/src";
+      nativeBuildInputs = [ "extra-native" ];
+    };
+  in [
+    (mkTest "swiftpkg-edge-extra-attr-preserved"
+      (extraAttrPkg ? customAttr && extraAttrPkg.customAttr == "preserved")
+      "mkSwiftPackage should preserve extra passthrough attributes")
+
+    (mkTest "swiftpkg-edge-buildInputs-has-apple-sdk"
+      (builtins.elem "/nix/store/mock-apple-sdk" defaultPkg.buildInputs)
+      "mkSwiftPackage pure build should include apple-sdk in buildInputs")
+
+    (mkTest "swiftpkg-edge-extraBuildInputs-forwarded"
+      (builtins.elem "extra-dep-1" extraBuildInputsPkg.buildInputs
+        && builtins.elem "extra-dep-2" extraBuildInputsPkg.buildInputs)
+      "mkSwiftPackage should forward extraBuildInputs to buildInputs")
+
+    (mkTest "swiftpkg-edge-extra-nativeBuildInputs-preserved"
+      (builtins.elem "extra-native" withExtraNativePkg.nativeBuildInputs)
+      "mkSwiftPackage should preserve extra nativeBuildInputs from cleanArgs")
+
+    (mkTest "swiftpkg-edge-installPhase-mkdir"
+      (lib.hasInfix "mkdir -p $out/bin" defaultPkg.installPhase)
+      "mkSwiftPackage installPhase should create $out/bin")
+
+    (mkTest "swiftpkg-edge-pure-no-sdkroot-in-buildPhase"
+      (!(lib.hasInfix "SDKROOT" defaultPkg.buildPhase))
+      "mkSwiftPackage pure build should not have SDKROOT discovery")
+
+    (mkTest "swiftpkg-edge-buildPhase-runHook-preBuild"
+      (lib.hasInfix "runHook preBuild" defaultPkg.buildPhase)
+      "mkSwiftPackage buildPhase should call runHook preBuild")
+
+    (mkTest "swiftpkg-edge-buildPhase-runHook-postBuild"
+      (lib.hasInfix "runHook postBuild" defaultPkg.buildPhase)
+      "mkSwiftPackage buildPhase should call runHook postBuild")
+
+    (mkTest "swiftpkg-edge-installPhase-runHook-preInstall"
+      (lib.hasInfix "runHook preInstall" defaultPkg.installPhase)
+      "mkSwiftPackage installPhase should call runHook preInstall")
+
+    (mkTest "swiftpkg-edge-installPhase-runHook-postInstall"
+      (lib.hasInfix "runHook postInstall" defaultPkg.installPhase)
+      "mkSwiftPackage installPhase should call runHook postInstall")
+  ];
+
+  # ══════════════════════════════════════════════════════════════════════
+  # Edge case tests — mkSwiftApp (8)
+  # ══════════════════════════════════════════════════════════════════════
+  swiftAppEdgeTests = let
+    mkApp = swiftAppLib.mkSwiftApp mockPkgs;
+
+    customEntApp = mkApp {
+      pname = "EntApp"; version = "1.0.0"; src = "/mock/src";
+      bundleIdentifier = "io.pleme.ent";
+      entitlements = { allowJit = true; };
+    };
+
+    defaultApp = mkApp {
+      pname = "DefaultApp"; version = "1.0.0"; src = "/mock/src";
+      bundleIdentifier = "io.pleme.default";
+    };
+
+    noSwiftUIApp = mkApp {
+      pname = "NoUIApp"; version = "1.0.0"; src = "/mock/src";
+      bundleIdentifier = "io.pleme.noui";
+      needsSwiftUI = false;
+    };
+
+    debugApp = mkApp {
+      pname = "DebugApp"; version = "2.0.0"; src = "/mock/src";
+      bundleIdentifier = "io.pleme.debug";
+      buildConfiguration = "debug";
+    };
+  in [
+    (mkTest "swiftapp-edge-custom-ent-has-jit"
+      (lib.hasInfix "allow-jit" customEntApp.postFixup)
+      "mkSwiftApp with custom entitlements should include allowJit")
+
+    (mkTest "swiftapp-edge-custom-ent-has-disable-lib-val"
+      (lib.hasInfix "disable-library-validation" customEntApp.postFixup)
+      "mkSwiftApp should always include default disableLibraryValidation")
+
+    (mkTest "swiftapp-edge-postFixup-has-entFile"
+      (lib.hasInfix "entFile" defaultApp.postFixup)
+      "mkSwiftApp postFixup should define entFile for entitlements")
+
+    (mkTest "swiftapp-edge-postFixup-signAllMachO-path"
+      (lib.hasInfix "Applications/DefaultApp.app" defaultApp.postFixup)
+      "mkSwiftApp postFixup should sign the correct app path")
+
+    (mkTest "swiftapp-edge-always-impure"
+      (defaultApp.__noChroot == true)
+      "mkSwiftApp should always be impure")
+
+    (mkTest "swiftapp-edge-no-swiftui-no-check"
+      (!(lib.hasInfix "SwiftUI.framework" noSwiftUIApp.buildPhase))
+      "mkSwiftApp with needsSwiftUI=false should not check SwiftUI")
+
+    (mkTest "swiftapp-edge-debug-config"
+      (lib.hasInfix "-c debug" debugApp.buildPhase)
+      "mkSwiftApp should use custom buildConfiguration")
+
+    (mkTest "swiftapp-edge-installPhase-appDir"
+      (lib.hasInfix "appDir=" defaultApp.installPhase)
+      "mkSwiftApp installPhase should set appDir variable")
+  ];
+
+  # ══════════════════════════════════════════════════════════════════════
+  # Edge case tests — mkZigSwiftApp (6)
+  # ══════════════════════════════════════════════════════════════════════
+  zigSwiftAppEdgeTests = let
+    mkZigApp = zigSwiftLib.mkZigSwiftApp mockPkgs;
+
+    defaultZigApp = mkZigApp {
+      pname = "TestApp"; version = "1.0.0"; src = "/mock/src";
+    };
+
+    extraApp = mkZigApp {
+      pname = "ExtraApp"; version = "1.0.0"; src = "/mock/src";
+      extraNativeBuildInputs = [ "extra-native" ];
+      extraBuildInputs = [ "extra-build" ];
+    };
+  in [
+    (mkTest "zigswift-edge-default-ent-has-jit-and-lib-val"
+      (lib.hasInfix "allow-jit" defaultZigApp.postFixup
+        && lib.hasInfix "disable-library-validation" defaultZigApp.postFixup)
+      "mkZigSwiftApp default entitlements should have JIT and disable-library-validation")
+
+    (mkTest "zigswift-edge-extra-nativeBuildInputs"
+      (builtins.elem "extra-native" extraApp.nativeBuildInputs)
+      "mkZigSwiftApp should forward extraNativeBuildInputs")
+
+    (mkTest "zigswift-edge-extra-buildInputs"
+      (builtins.elem "extra-build" extraApp.buildInputs)
+      "mkZigSwiftApp should forward extraBuildInputs")
+
+    (mkTest "zigswift-edge-default-needsSwiftUI"
+      (lib.hasInfix "SwiftUI.framework" defaultZigApp.buildPhase)
+      "mkZigSwiftApp should check SwiftUI by default (needsSwiftUI=true)")
+
+    (mkTest "zigswift-edge-has-both-toolchains"
+      (builtins.elem "/nix/store/mock-zig-toolchain" defaultZigApp.nativeBuildInputs
+        && builtins.elem "/nix/store/mock-swift-toolchain" defaultZigApp.nativeBuildInputs)
+      "mkZigSwiftApp should include both zig and swift in nativeBuildInputs")
+
+    (mkTest "zigswift-edge-signs-standalone-binaries"
+      (lib.hasInfix "$out/bin" defaultZigApp.postFixup)
+      "mkZigSwiftApp postFixup should sign standalone binaries")
+  ];
+
+  # ══════════════════════════════════════════════════════════════════════
+  # Edge case tests — mkXcodeProject (8)
+  # ══════════════════════════════════════════════════════════════════════
+  xcodeProjectEdgeTests = let
+    mkXcode = xcodeProjLib.mkXcodeProject mockPkgs;
+
+    minimalXcode = mkXcode {
+      pname = "MinApp"; version = "1.0.0"; src = "/mock/src";
+      scheme = "MinApp";
+    };
+
+    extraFlagsXcode = mkXcode {
+      pname = "FlagApp"; version = "1.0.0"; src = "/mock/src";
+      scheme = "FlagApp";
+      extraXcodebuildFlags = [ "SWIFT_VERSION=5.9" "MACOSX_DEPLOYMENT_TARGET=14.0" ];
+    };
+
+    customDerivedData = mkXcode {
+      pname = "DDApp"; version = "1.0.0"; src = "/mock/src";
+      scheme = "DDApp";
+      derivedDataPath = "/custom/derived";
+    };
+  in [
+    (mkTest "xcode-edge-no-workspace-no-project"
+      (!(lib.hasInfix "-workspace" minimalXcode.buildPhase)
+        && !(lib.hasInfix "-project" minimalXcode.buildPhase))
+      "mkXcodeProject without workspace/project should have neither flag")
+
+    (mkTest "xcode-edge-extra-flags"
+      (lib.hasInfix "SWIFT_VERSION=5.9" extraFlagsXcode.buildPhase)
+      "mkXcodeProject should include extraXcodebuildFlags")
+
+    (mkTest "xcode-edge-extra-flags-deployment-target"
+      (lib.hasInfix "MACOSX_DEPLOYMENT_TARGET=14.0" extraFlagsXcode.buildPhase)
+      "mkXcodeProject extraXcodebuildFlags should include deployment target")
+
+    (mkTest "xcode-edge-derived-data-path"
+      (lib.hasInfix "/custom/derived" customDerivedData.buildPhase)
+      "mkXcodeProject should use custom derivedDataPath")
+
+    (mkTest "xcode-edge-only-active-arch"
+      (lib.hasInfix "ONLY_ACTIVE_ARCH=NO" minimalXcode.buildPhase)
+      "mkXcodeProject should include ONLY_ACTIVE_ARCH=NO")
+
+    (mkTest "xcode-edge-code-signing-allowed"
+      (lib.hasInfix "CODE_SIGNING_ALLOWED=NO" minimalXcode.buildPhase)
+      "mkXcodeProject should include CODE_SIGNING_ALLOWED=NO")
+
+    (mkTest "xcode-edge-scheme-in-buildPhase"
+      (lib.hasInfix "MinApp" minimalXcode.buildPhase)
+      "mkXcodeProject should include scheme in buildPhase")
+
+    (mkTest "xcode-edge-installPhase-error-handling"
+      (lib.hasInfix "Could not find .app" minimalXcode.installPhase)
+      "mkXcodeProject installPhase should have error handling for missing app")
+  ];
+
 in
 runTests (
   codesignTests
@@ -1196,4 +1771,13 @@ runTests (
   ++ xcodeProjectTests
   ++ unifiedApiTests
   ++ moduleTests
+  ++ completionTests
+  ++ swiftPackageCompletionTests
+  ++ swiftToolReleaseTests
+  ++ codesignEdgeTests
+  ++ sandboxEdgeTests
+  ++ swiftPackageEdgeTests
+  ++ swiftAppEdgeTests
+  ++ zigSwiftAppEdgeTests
+  ++ xcodeProjectEdgeTests
 )

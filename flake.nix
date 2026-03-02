@@ -35,7 +35,6 @@
     testHelpers = import "${substrate}/lib/test-helpers.nix" { inherit lib; };
   in {
     # ── Overlay ─────────────────────────────────────────────────────
-    # Enriched overlay: Swift toolchain + build helpers (mkSwiftPackage, mkSwiftApp, etc.)
     overlays.default = (import ./lib/overlay.nix).mkSwiftOverlay {};
 
     # ── Packages ────────────────────────────────────────────────────
@@ -54,10 +53,12 @@
       sdkHelpers = ./lib/sdk-helpers.nix;
       sandbox = ./lib/sandbox.nix;
       codesign = ./lib/codesign.nix;
+      completions = ./lib/completions.nix;
       swiftPackage = ./lib/swift-package.nix;
       swiftApp = ./lib/swift-app.nix;
       zigSwiftApp = ./lib/zig-swift-app.nix;
       xcodeProject = ./lib/xcode-project.nix;
+      swiftToolRelease = ./lib/swift-tool-release.nix;
     };
 
     # ── Tests (pure Nix eval — no builds) ───────────────────────────

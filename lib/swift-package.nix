@@ -14,6 +14,7 @@
 let
   sandbox = import ./sandbox.nix { inherit lib; };
   sdkHelpers = import ./sdk-helpers.nix { inherit lib; };
+  completionsLib = import ./completions.nix;
 in
 {
   mkSwiftPackage = pkgs: {
@@ -25,6 +26,7 @@ in
     needsSwiftUI ? false,
     extraBuildInputs ? [],
     products ? [ pname ],
+    completions ? null,
     ...
   } @ args:
   let
@@ -33,6 +35,10 @@ in
 
     pureSDK = lib.optionals (!needsSwiftUI) (sandbox.mkPureSDKInputs pkgs);
 
+    completionAttrs = completionsLib.mkSwiftCompletionAttrs pkgs {
+      inherit pname completions;
+    };
+
     flagStr = lib.concatStringsSep " " (
       [ "-c" buildConfiguration "--disable-sandbox" ]
       ++ swiftFlags
@@ -40,13 +46,15 @@ in
 
     cleanArgs = builtins.removeAttrs args [
       "pname" "version" "src" "swiftFlags" "buildConfiguration"
-      "needsSwiftUI" "extraBuildInputs" "products"
+      "needsSwiftUI" "extraBuildInputs" "products" "completions"
     ];
   in
   pkgs.stdenv.mkDerivation (cleanArgs // {
     inherit pname version src;
 
-    nativeBuildInputs = [ pkgs.swiftToolchain ] ++ (cleanArgs.nativeBuildInputs or []);
+    nativeBuildInputs = [ pkgs.swiftToolchain ]
+      ++ completionAttrs.nativeBuildInputs
+      ++ (cleanArgs.nativeBuildInputs or []);
     buildInputs = pureSDK ++ extraBuildInputs ++ (cleanArgs.buildInputs or []);
 
     buildPhase = ''
@@ -62,6 +70,7 @@ in
       ${lib.concatMapStringsSep "\n" (prod: ''
         install -Dm755 ".build/${buildConfiguration}/${prod}" "$out/bin/${prod}"
       '') products}
+      ${completionAttrs.postInstallScript}
       runHook postInstall
     '';
 

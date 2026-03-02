@@ -15,6 +15,7 @@ let
   sdkHelpers = import ./sdk-helpers.nix { inherit lib; };
   sandbox = import ./sandbox.nix { inherit lib; };
   codesign = import ./codesign.nix { inherit lib; };
+  completionsModule = import ./completions.nix;
   swiftPackageModule = import ./swift-package.nix { inherit lib; };
   swiftAppModule = import ./swift-app.nix { inherit lib; };
   zigSwiftAppModule = import ./zig-swift-app.nix { inherit lib; };
@@ -29,9 +30,17 @@ in {
   # ── Codesigning ──────────────────────────────────────────────────
   inherit codesign;
 
+  # ── Completions ──────────────────────────────────────────────────
+  inherit (completionsModule) mkSwiftCompletionAttrs;
+
   # ── Build Helpers ────────────────────────────────────────────────
   inherit (swiftPackageModule) mkSwiftPackage;
   inherit (swiftAppModule) mkSwiftApp;
   inherit (zigSwiftAppModule) mkZigSwiftApp;
   inherit (xcodeProjectModule) mkXcodeProject;
+
+  # ── Release Builders (standalone import) ─────────────────────────
+  # mkSwiftToolRelease requires runtime args (nixpkgs, system, substrate)
+  # so we export the path for consumers to import directly.
+  swiftToolRelease = ./swift-tool-release.nix;
 }
