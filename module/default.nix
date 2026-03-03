@@ -25,7 +25,7 @@ in
     # Swift toolchain
     (lib.mkIf cfg.swift.enable {
       home.packages = [
-        (pkgs.swiftToolchain or pkgs.swift)
+        (lib.lowPrio (pkgs.swiftToolchain or pkgs.swift))
       ];
     })
   ]);
