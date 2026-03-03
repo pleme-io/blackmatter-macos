@@ -22,11 +22,14 @@ in
   };
 
   config = lib.mkIf (cfg.enable && isDarwin) (lib.mkMerge [
-    # Swift toolchain
-    (lib.mkIf cfg.swift.enable {
+    # Swift toolchain — priority 100 so it yields to clang-wrapper (pri 10)
+    # and clang-tools already in home.packages from other modules.
+    (lib.mkIf cfg.swift.enable (let
+      swiftPkg = pkgs.swiftToolchain or pkgs.swift;
+    in {
       home.packages = [
-        (lib.lowPrio (pkgs.swiftToolchain or pkgs.swift))
+        (swiftPkg // { meta = (swiftPkg.meta or {}) // { priority = 100; }; })
       ];
-    })
+    }))
   ]);
 }
