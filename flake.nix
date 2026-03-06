@@ -12,9 +12,13 @@
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.substrate.follows = "substrate";
     };
+    devenv = {
+      url = "github:cachix/devenv";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, substrate, blackmatter-zig }:
+  outputs = { self, nixpkgs, substrate, blackmatter-zig, devenv }:
   let
     lib = nixpkgs.lib;
 
@@ -60,6 +64,19 @@
       xcodeProject = ./lib/xcode-project.nix;
       swiftToolRelease = ./lib/swift-tool-release.nix;
     };
+
+    # ── Dev shells ──────────────────────────────────────────────────
+    devShells = forEachDarwin ({ pkgs, ... }: {
+      default = devenv.lib.mkShell {
+        inputs = { inherit nixpkgs devenv; };
+        inherit pkgs;
+        modules = [{
+          languages.nix.enable = true;
+          packages = with pkgs; [ nixpkgs-fmt nil ];
+          git-hooks.hooks.nixpkgs-fmt.enable = true;
+        }];
+      };
+    });
 
     # ── Tests (pure Nix eval — no builds) ───────────────────────────
     tests = forEachDarwin ({ ... }: {
