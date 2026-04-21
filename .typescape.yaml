@@ -1,0 +1,29 @@
+schema_version: 1
+manifest:
+  name: blackmatter-macos
+  kind: BlackmatterComponent
+  archetype: blackmatter-component-custom-darwin-overlay
+  description: Swift toolchain, Apple SDK helpers, codesigning, and build patterns for native macOS apps.
+  custom_flake: true
+  custom_flake_reason: |
+    Darwin-only overlay with Swift toolchain composition + lib/ import paths
+    for downstream macOS app builders (swiftPackage, swiftApp, zigSwiftApp,
+    xcodeProject, swiftToolRelease). Template covers cross-platform module repos,
+    not build-pattern lib exports.
+dimensions:
+  vocabulary: [swift, apple, sdk, codesign, sandbox, xcode]
+  domains: [Nix, Swift]
+  stack: [HomeManager]
+  modules:
+    home_manager: module/
+  render:
+    produces:
+      - "pkgs.swift + pkgs.swiftToolchain"
+      - "lib/swift-package.nix, lib/swift-app.nix, lib/zig-swift-app.nix"
+      - "lib/codesign.nix, lib/sandbox.nix, lib/sdk-helpers.nix"
+  compliance:
+    satisfies: []
+    participates: []
+  dag:
+    inputs: [nixpkgs, substrate, blackmatter-zig]
+  attestation: { merkle_root: null, signed_by: null, producer: custom-flake }
