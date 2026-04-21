@@ -1092,6 +1092,12 @@ let
   # ══════════════════════════════════════════════════════════════════════
   moduleTests = let
     # Helper to evaluate the module with a given pkgs mock
+    # Derivation-shaped mocks — must support `//` merge because the
+    # module sets a custom meta.priority via `swiftPkg // { meta = ...; }`.
+    # Strings don't support //; attrsets with an `outPath` do.
+    mockSwiftToolchain = { outPath = "/nix/store/mock-swift-toolchain"; meta = {}; };
+    mockSwift = { outPath = "/nix/store/mock-swift"; meta = {}; };
+
     evalModule = { isDarwin ? false, enableMacos ? false, enableSwift ? true }:
       lib.evalModules {
         modules = [
@@ -1099,8 +1105,8 @@ let
           ({ ... }: {
             config._module.args.pkgs = {
               stdenv.hostPlatform.isDarwin = isDarwin;
-              swiftToolchain = "mock-swift-toolchain";
-              swift = "mock-swift";
+              swiftToolchain = mockSwiftToolchain;
+              swift = mockSwift;
             };
             options.home.packages = lib.mkOption {
               type = lib.types.listOf lib.types.unspecified;
@@ -1114,7 +1120,9 @@ let
         ];
       };
 
-    # Evaluate with only pkgs.swift (no swiftToolchain)
+    # Evaluate with only pkgs.swift (no swiftToolchain). Same
+    # derivation-shape requirement — `//` over an attrset with outPath.
+    mockSwiftFallback = { outPath = "/nix/store/mock-swift-fallback"; meta = {}; };
     evalModuleFallback =
       lib.evalModules {
         modules = [
@@ -1122,7 +1130,7 @@ let
           ({ ... }: {
             config._module.args.pkgs = {
               stdenv.hostPlatform.isDarwin = true;
-              swift = "mock-swift-fallback";
+              swift = mockSwiftFallback;
             };
             options.home.packages = lib.mkOption {
               type = lib.types.listOf lib.types.unspecified;
@@ -1191,7 +1199,8 @@ let
       "enabled on Darwin should add exactly 1 package (swiftToolchain)")
 
     (mkTest "module-darwin-enabled-is-swiftToolchain"
-      (builtins.head darwinEnabled.config.home.packages == "mock-swift-toolchain")
+      ((builtins.head darwinEnabled.config.home.packages).outPath
+        == "/nix/store/mock-swift-toolchain")
       "enabled on Darwin should add swiftToolchain specifically")
 
     (mkTest "module-darwin-no-swift-no-packages"
@@ -1207,7 +1216,8 @@ let
       "disabled on Darwin should add no packages")
 
     (mkTest "module-fallback-to-swift"
-      (builtins.head evalModuleFallback.config.home.packages == "mock-swift-fallback")
+      ((builtins.head evalModuleFallback.config.home.packages).outPath
+        == "/nix/store/mock-swift-fallback")
       "module should fall back to pkgs.swift if swiftToolchain is missing")
   ];
 
