@@ -2,10 +2,9 @@
   description = "Blackmatter macOS — Swift toolchain, Apple SDK helpers, codesigning, and build patterns for native macOS apps";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+    nixpkgs.follows = "substrate/nixpkgs";
     substrate = {
       url = "github:pleme-io/substrate";
-      inputs.nixpkgs.follows = "nixpkgs";
     };
     blackmatter-zig = {
       url = "github:pleme-io/blackmatter-zig";
